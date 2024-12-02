@@ -8,29 +8,29 @@ import re
 
 # Remove problematic characters from strings (return copy)
 def SanitizeString(string):
-	sanitized = re.sub("[\0\x1a'\";]", "", string)
+	sanitized = re.sub("[\0\x1a;]", "", string)
 	return sanitized
 
 # Sanitize the strings in an object (dict or list) (return copy)
 def SanitizeObj(o):
-	obj = []
-	seq = o if type(o) is list else o.values()
+	t = type(o)
+	if (t is str): return SanitizeString(o)
+	elif (t is not list and t is not dict): return o
 
-	for e in seq:
-		t = type(e)
+	obj = None
 
-		if (t is str):
-			obj.append(SanitizeString(e))
-		elif (t is list or t is dict):
+	if (t is list):
+		obj = []
+		for e in o:
 			obj.append(SanitizeObj(e))
-		else:
-			obj.append(e)
-
-	if (type(o) is dict):
-		out = dict(o)
-		for key, val in zip(out.keys(), obj):
-			out[key] = val
-		obj = out
+	elif (t is dict):
+		obj = {}
+		for key, val in o.items():
+			k = SanitizeObj(key)
+			v = SanitizeObj(val)
+			obj[k] = v
+	else:
+		obj = o
 
 	return obj
 
@@ -178,7 +178,7 @@ async def VPI_DB_UserSelect(info, cursor):
 # kwargs:
 # 	required:
 # 		table  (string) -- String table name to select from
-# 		values (array)  -- Array of arrays of column values to insert - [ [1,2,3], ... ]
+# 		values (array)  -- Values to insert, can be single list or list of lists for multiple values
 # 	optional:
 # 		columns (array) -- Array of string column names
 @WrapDB
@@ -194,6 +194,10 @@ async def VPI_DB_UserInsert(info, cursor):
 	# VALUES
 	values = kwargs["values"]
 	if (type(values) is not list or not len(values)): raise ValueError
+
+	# Convert to sublist if needed
+	if (not all([type(v) is list for v in values])):
+		values = [values]
 
 	# Construct query
 	s_columns = ""
@@ -244,11 +248,48 @@ async def VPI_DB_UserUpdate(info, cursor):
 
 	return cursor.rowcount
 
-# todo rethink insertorupdate
-# todo allow single [] for values in insert instead of [[1,2,3]]
-
 # INSERT INTO <table> <columns> VALUES (...) ON DUPLICATE KEY UPDATE <col> = <val>, ...
-async def VPI_DB_InsertOrUpdate(info, cursor): pass
+@WrapDB
+async def VPI_DB_UserInsertOrUpdate(info, cursor):
+	kwargs = SanitizeObj(info["kwargs"])
+
+	# INTO
+	table = ValidateUserTable(info, kwargs["table"])
+
+	# INSERT
+	columns = kwargs["columns"] if "columns" in kwargs else None
+
+	# VALUES
+	values = kwargs["values"]
+	if (type(values) is not list or not len(values)): raise ValueError
+
+	# Convert to sublist if needed
+	if (not all([type(v) is list for v in values])):
+		values = [values]
+
+	# ON DUPLICATE KEY UPDATE
+	update_values = kwargs["update_values"]
+	if (type(update_values) is not dict or not len(update_values)): raise ValueError
+
+	formatted_update = {}
+	for col, val in update_values.items():
+		col = str(col).replace("t.", f"{table}.")
+		val = str(val).replace("t.", f"{table}.").replace("n.", f"new.")
+		formatted_update[col] = val
+
+	# Construct query
+	s_columns = ""
+	if (type(columns) is list and len(columns)):
+		','.join([s for s in columns if type(s) is str])
+
+	s_values = "VALUES " + ','.join([f"({','.join([str(v) for v in vals])})" for vals in values])
+	s_update = ','.join([f"{col} = {val}" for col, val in formatted_update.items()])
+
+	print(f"INSERT INTO {table} {s_columns} {s_values} AS new ON DUPLICATE KEY UPDATE {s_update}")
+
+	await cursor.execute(f"INSERT INTO {table} {s_columns} {s_values} AS new ON DUPLICATE KEY UPDATE {s_update}")
+
+	return cursor.rowcount # todo this is a little wonky on this query for some reason
 
 # Simple DELETE statement wrapper for users
 # kwargs:
