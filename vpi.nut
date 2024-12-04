@@ -21,7 +21,9 @@ local PROTECTED_FILE_FUNCTIONS = true;
 // You may match against interface function names with regexp, to do so, start and end the string with forward slash /
 // and create any pattern defined by squirrel: http://squirrel-lang.org/squirreldoc/stdlib/stdstringlib.html#the-regexp-class
 // { "source.nut" : [ "VPI_InterfaceFunctionName", @"/VPI_DB_User.*/" ] }
-local SOURCE_WHITELIST = {};
+local SOURCE_WHITELIST = {
+	"vpi.nut": null, // Null or empty list denotes uninhibited access
+};
 
 // How often we normally write to file (in ticks)
 local WRITE_INTERVAL = 198; // 3 s
