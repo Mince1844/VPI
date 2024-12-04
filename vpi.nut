@@ -1,20 +1,27 @@
 // VScript-Python Interface
-// Version 1.0.0
 // Client
 
 // Made by Mince (STEAM_0:0:41588292)
 
-
 //////////////////////////////////////////  SCRIPT VARS  //////////////////////////////////////////
 // Server owners modify this section
+
+// Token used to verify the identity of the functions we expose to the public to prevent tampering
+// If they do not return this secret when prompted the program will abort
+// Do not put this token into a variable as error locals traces can give away its value
+local function GetSecret() {
+	return "<Your token goes here>";
+}
+
+// Note: This only works to ensure security if vpi.nut is executed within mapspawn.nut
+// Do not set this to false unless you handle wrapping the file functions elsewhere
+local PROTECTED_FILE_FUNCTIONS = true;
 
 // Stores which source files are allowed to use what interface functions, if the table is empty whitelist is disabled
 // You may match against interface function names with regexp, to do so, start and end the string with forward slash /
 // and create any pattern defined by squirrel: http://squirrel-lang.org/squirreldoc/stdlib/stdstringlib.html#the-regexp-class
 // { "source.nut" : [ "VPI_InterfaceFunctionName", @"/VPI_DB_User.*/" ] }
-local SOURCE_WHITELIST = {
-	"a.nut": [@"/VPI_DB.*/"],
-};
+local SOURCE_WHITELIST = {};
 
 // How often we normally write to file (in ticks)
 local WRITE_INTERVAL = 198; // 3 s
@@ -33,6 +40,89 @@ local URGENT_WRITE_MAX_COUNT = 3; // How many urgent calls per WRITE_INTERVAL ar
 local urgent_write_count     = 0;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+
+if (GetSecret() == "<Your token goes here>") throw "[VPI ERROR] Please set your secret token";
+
+local ROOT = getroottable();
+
+local stringtofile = ::StringToFile;
+local filetostring = ::FileToString;
+
+local function ValidateIntegrity()
+{
+	try
+	{
+		if (::StringToFile(null, null, true) != GetSecret()) throw null;
+		if (::FileToString(null, true) != GetSecret()) throw null;
+
+		if ("VPI" in ROOT)
+		{
+			if (VPI.Call(null, null, null, null, true) != GetSecret()) throw null;
+			if (VPI.AsyncCall(null, true) != GetSecret()) throw null;
+			if (VPI.ChainCall(null, null, null, true) != GetSecret()) throw null;
+		}
+	}
+	catch (e) { throw "[VPI ERROR] *** POSSIBLE VPI FUNCTION TAMPERING, ABORTING ***" }
+}
+
+if (PROTECTED_FILE_FUNCTIONS)
+{
+	local function GetFileExtension(file)
+	{
+		local index = null;
+		for (local i = file.len() - 1; i >= 0; --i)
+		{
+			if (file[i] == '.')
+			{
+				index = i;
+				break;
+			}
+		}
+
+		if (index == null) return;
+		return file.slice(index);
+	}
+
+	// Filter the source that called us in the VM stack
+	local function ValidateFileCaller(src, file)
+	{
+		local extension = GetFileExtension(file);
+		if (!extension || extension == "" || extension != ".interface")
+			return true;
+		else
+			return (src == "vpi.nut");
+	}
+
+
+	::StringToFile <- function(file, str, __challenge=false) {
+		local callinfo = getstackinfos(2);
+		if (__challenge)
+		{
+			if (callinfo.src != "vpi.nut") return;
+			else return GetSecret();
+		}
+
+		if (typeof(file) != "string") return;
+		if (typeof(str)  != "string") return;
+		if (!ValidateFileCaller(callinfo.src, file)) return;
+
+		stringtofile(file, str);
+	};
+
+	::FileToString <- function(file, __challenge=false) {
+		local callinfo = getstackinfos(2);
+		if (__challenge)
+		{
+			if (callinfo.src != "vpi.nut") return;
+			else return GetSecret();
+		}
+
+		if (typeof(file) != "string") return;
+		if (!ValidateFileCaller(callinfo.src, file)) return;
+
+		return filetostring(file);
+	};
+}
 
 
 // Storage for interface calls so we can write on an interval
@@ -783,21 +873,32 @@ local function GetCallFromArg(src, arg)
 	catch (e) {}
 }
 
-// Public interface for scripters
+// Public interface for user scripts
 ::VPI <- {
 	// Create a VPICallInfo instance (we don't want the actual class visible for security)
-	function Call(func, kwargs=null, callback=null, urgent=false)
+	function Call(func, kwargs=null, callback=null, urgent=false, __challenge=false)
 	{
 		local callinfo = getstackinfos(2);
-		if (!ValidateCaller(callinfo.src, func)) return;
+		if (__challenge)
+		{
+			if (callinfo.src != "vpi.nut") return;
+			else return GetSecret();
+		}
 
+		if (!ValidateCaller(callinfo.src, func)) return;
 		return VPICallInfo(callinfo.src, func, kwargs, callback, urgent);
 	},
 
-	// Queue a call to be sent to the server which will be interpreted asynchronously (order doesn't matter)
-	function AsyncCall(table_or_call)
+	// Queue a call to be sent to the server which will be interpreted asynchronously
+	function AsyncCall(table_or_call, __challenge=false)
 	{
 		local callinfo = getstackinfos(2);
+		if (__challenge)
+		{
+			if (callinfo.src != "vpi.nut") return;
+			else return GetSecret();
+		}
+
 		local call = GetCallFromArg(callinfo.src, table_or_call);
 		if (!call || !call.token) return;
 
@@ -816,13 +917,17 @@ local function GetCallFromArg(src, arg)
 		return true;
 	},
 
-	// Queue a list of calls to be sent to the server which will be interpreted synchronously (order is preserved)
-	// E.g. the first call is executed, then the second only after the first finishes, and so on
-	function ChainCall(calls, callback=null, urgent=false)
+	// Queue a list of calls to be sent to the server which will be interpreted synchronously
+	function ChainCall(calls, callback=null, urgent=false, __challenge=false)
 	{
-		if (typeof(calls) != "array" || !calls.len()) return;
-
 		local callinfo = getstackinfos(2);
+		if (__challenge)
+		{
+			if (callinfo.src != "vpi.nut") return;
+			else return GetSecret();
+		}
+
+		if (typeof(calls) != "array" || !calls.len()) return;
 
 		local new_calls = [];
 		foreach (el in calls)
@@ -889,6 +994,15 @@ local SCRIPT_SCOPE = SCRIPT_ENTITY.GetScriptScope();
 
 SCRIPT_SCOPE.tickcount <- 0;
 SCRIPT_SCOPE.Think <- function() {
+	// Check for tampering
+	try { ValidateIntegrity(); }
+	// Terminate
+	catch (e)
+	{
+		self.Kill();
+		throw e;
+	}
+
 	// Read input
 	if (callbacks.len())
 	{
@@ -934,7 +1048,14 @@ SCRIPT_SCOPE.Think <- function() {
 AddThinkToEnt(SCRIPT_ENTITY, "Think");
 
 // Make sure we get any pending calls out to the server
-SetDestroyCallback(SCRIPT_ENTITY, function() { WriteCallList(CombineCallLists(), true); });
+SetDestroyCallback(SCRIPT_ENTITY, function() {
+	WriteCallList(CombineCallLists(), true);
+
+	// Clean up after ourselves
+	delete ROOT.VPI;
+	::StringToFile <- stringtofile;
+	::FileToString <- filetostring;
+});
 
 // Tell the server to clear out any callbacks it might be waiting to write
 // from the previous map / script load

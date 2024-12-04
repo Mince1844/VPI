@@ -1,32 +1,40 @@
 # VScript-Python Interface
-# Version 1.0.0
 # Server
 
 # Made by Mince (STEAM_0:0:41588292)
 
-
-print("VScript-Python Interface\n")
-
 import os
+import sys
 import datetime
 import time
 import json
 import importlib
 import asyncio
 import aiomysql
+import argparse
 
 import vpi_interfaces
+
+PARSER = argparse.ArgumentParser()
+PARSER.add_argument("--host", help="Hostname for database connection", type=str)
+PARSER.add_argument("-u", "--user", help="User for database connection", type=str)
+PARSER.add_argument("-p", "--port", help="Port for database connection", type=int)
+PARSER.add_argument("-db", "--database", help="Database to use", type=str)
+PARSER.add_argument("--password", help="Password for database connection", type=str)
+
+args = PARSER.parse_args()
 
 ############################################ ENV VARS #############################################
 # Server owners modify this section
 
 genv = os.environ.get
 
-DB_HOST     = genv("VPI_HOST",      "localhost")
-DB_USER     = genv("VPI_USER",      "user")
-DB_PORT	    = int(genv("VPI_PORT",  3306))
-DB_DATABASE	= genv("VPI_INTERFACE", "interface")
-DB_PASSWORD	= genv("VPI_PASSWORD")
+# Modify VPI_* with your environment variables if you named them something else
+DB_HOST     = args.host     if args.host     else genv("VPI_HOST",      "localhost")
+DB_USER     = args.user     if args.user     else genv("VPI_USER",      "user")
+DB_PORT	    = args.port     if args.port     else int(genv("VPI_PORT",  3306))
+DB_DATABASE	= args.database if args.database else genv("VPI_INTERFACE", "interface")
+DB_PASSWORD	= args.password if args.password else genv("VPI_PASSWORD")
 
 SCRIPTDATA_DIR = genv("VPI_SCRIPTDATA_DIR", r"C:\Program Files (x86)\Steam\steamapps\common\Team Fortress 2\tf\scriptdata")
 
@@ -38,6 +46,7 @@ for env in [DB_HOST, DB_USER, DB_PORT, DB_DATABASE, SCRIPTDATA_DIR]:
 
 if (DB_PASSWORD is None):
 	DB_PASSWORD = input(f"Enter password for {DB_USER}@{DB_HOST}:{DB_PORT} >>> ")
+	print()
 
 if (not os.path.exists(SCRIPTDATA_DIR)): raise RuntimeError("SCRIPTDATA_DIR does not exist")
 
@@ -229,7 +238,7 @@ POOL = None
 async def main():
 	global POOL
 	POOL = await aiomysql.create_pool(host=DB_HOST, user=DB_USER, password=DB_PASSWORD, port=DB_PORT, db=DB_DATABASE, autocommit=False)
-	print(POOL)
+	print(str(POOL) + "\n")
 
 	global calls
 	global callbacks

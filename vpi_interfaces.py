@@ -248,7 +248,15 @@ async def VPI_DB_UserUpdate(info, cursor):
 
 	return cursor.rowcount
 
-# INSERT INTO <table> <columns> VALUES (...) ON DUPLICATE KEY UPDATE <col> = <val>, ...
+# INSERT ON DUPLICATE KEY UPDATE wrapper for users
+# kwargs:
+# 	required:
+# 		table         (string) -- String table name to select from
+# 		values        (array)  -- Values to insert, can be single list or list of lists for multiple values
+# 		update_values (table)  -- What values to set columns to on duplicate key. t. and n. can be used as shorthand
+# 								  for the table name and values label respectively (e.g. "t.wins": "t.wins + n.wins")
+# 	optional:
+# 		columns (array) -- Array of string column names
 @WrapDB
 async def VPI_DB_UserInsertOrUpdate(info, cursor):
 	kwargs = SanitizeObj(info["kwargs"])
