@@ -109,7 +109,7 @@ def WrapInterface(func):
 async def VPI_DB_RawExecute(info, cursor):
 	# While we already defined a whitelist on the client, this is here
 	# to ensure this is not exposed unintentionally (e.g. from empty client whitelist)
-	source_whitelist = ["vpi.nut", "a.nut"] # Script names go here
+	source_whitelist = ["vpi.nut"] # Script names go here
 	if (not len(source_whitelist)): raise PermissionError
 	if (info["script"] not in source_whitelist): raise PermissionError
 
