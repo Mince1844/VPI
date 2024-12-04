@@ -1,2 +1,7 @@
-# VScript-Python Interface
-An interface for calling Python functions (DB access included) securely from the VScript Squirrel VM scripting environment within supporting Source Engine games.
+# Overview
+
+# Usage
+
+# Considerations
+Security
+Performance
