@@ -4,7 +4,6 @@
 # Made by Mince (STEAM_0:0:41588292)
 
 import os
-import sys
 import datetime
 import time
 import json
