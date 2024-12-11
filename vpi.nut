@@ -23,6 +23,7 @@ local PROTECTED_FILE_FUNCTIONS = true;
 // { "source.nut" : [ "VPI_InterfaceFunctionName", @"/VPI_DB_User.*/" ] }
 local SOURCE_WHITELIST = {
 	"vpi.nut": null, // Null or empty list denotes uninhibited access
+	"test.nut": ["VPI_Safe"],
 };
 
 // How often we normally write to file (in ticks)
@@ -680,11 +681,11 @@ local VPICallInfo = class
 
 	GetScript = null;
 
-	// Prevent instance from leaking class by overriding builtin method
-	getclass = null;
-
-	constructor(s=null, f=null, k=null, c=null, u=null)
+	constructor(secret, s=null, f=null, k=null, c=null, u=null)
 	{
+		if (secret != GetSecret())
+			throw "[VPI ERROR] *** POSSIBLE VPI FUNCTION TAMPERING, ABORTING ***";
+
 		token  = UniqueString();
 
 		// Squirrel has no private members or way to detect instance modification
@@ -871,7 +872,7 @@ local function GetCallFromArg(src, arg)
 			local callback = ("callback" in arg) ? arg.callback : null;
 			local urgent   = ("urgent" in arg)   ? arg.urgent   : null;
 
-			return VPICallInfo(src, func, kwargs, callback, urgent);
+			return VPICallInfo(GetSecret(), src, func, kwargs, callback, urgent);
 		}
 	}
 	catch (e) {}
@@ -890,7 +891,7 @@ local function GetCallFromArg(src, arg)
 		}
 
 		if (!ValidateCaller(callinfo.src, func)) return;
-		return VPICallInfo(callinfo.src, func, kwargs, callback, urgent);
+		return VPICallInfo(GetSecret(), callinfo.src, func, kwargs, callback, urgent);
 	},
 
 	// Queue a call to be sent to the server which will be interpreted asynchronously
