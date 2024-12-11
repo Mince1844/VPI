@@ -23,7 +23,6 @@ local PROTECTED_FILE_FUNCTIONS = true;
 // { "source.nut" : [ "VPI_InterfaceFunctionName", @"/VPI_DB_User.*/" ] }
 local SOURCE_WHITELIST = {
 	"vpi.nut": null, // Null or empty list denotes uninhibited access
-	"test.nut": ["VPI_Safe"],
 };
 
 // How often we normally write to file (in ticks)
