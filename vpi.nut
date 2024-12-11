@@ -680,6 +680,9 @@ local VPICallInfo = class
 
 	GetScript = null;
 
+	// Prevent instance from leaking class by overriding builtin method
+	getclass = null;
+
 	constructor(s=null, f=null, k=null, c=null, u=null)
 	{
 		token  = UniqueString();
@@ -844,7 +847,6 @@ local function HandleCallbacks()
 	}
 	catch (e)
 	{
-		printl(e)
 		printl("[VPI] INVALID INPUT RECEIVED FROM SERVER");
 	}
 
@@ -902,7 +904,7 @@ local function GetCallFromArg(src, arg)
 		}
 
 		local call = GetCallFromArg(callinfo.src, table_or_call);
-		if (!call || !call.token) return;
+		if (!call || !call.token || callinfo.src != call.GetScript()) return;
 
 		if (!ValidateCaller(callinfo.src, call.func)) return;
 
@@ -935,7 +937,7 @@ local function GetCallFromArg(src, arg)
 		foreach (el in calls)
 		{
 			local call = GetCallFromArg(callinfo.src, el);
-			if (!call || !call.token) return;
+			if (!call || !call.token || callinfo.src != call.GetScript()) return;
 
 			if (!ValidateCaller(callinfo.src, call.func)) return;
 
