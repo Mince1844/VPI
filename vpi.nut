@@ -45,6 +45,10 @@ local urgent_write_count     = 0;
 
 if (GetSecret() == "<Your token goes here>") throw "[VPI ERROR] Please set your secret token";
 
+local lateload = (Entities.FindByName(null, "bignet") != null);
+if (lateload)
+	throw "[VPI ERROR] Late loading is not permitted as it is a security risk, please load in mapspawn.nut"
+
 local ROOT = getroottable();
 
 local stringtofile = ::StringToFile;
@@ -54,8 +58,11 @@ local function ValidateIntegrity()
 {
 	try
 	{
-		if (::StringToFile(null, null, true) != GetSecret()) throw null;
-		if (::FileToString(null, true) != GetSecret()) throw null;
+		if (PROTECTED_FILE_FUNCTIONS)
+		{
+			if (::StringToFile(null, null, true) != GetSecret()) throw null;
+			if (::FileToString(null, true) != GetSecret()) throw null;
+		}
 
 		if ("VPI" in ROOT)
 		{
@@ -94,7 +101,6 @@ if (PROTECTED_FILE_FUNCTIONS)
 		else
 			return (src == "vpi.nut");
 	}
-
 
 	::StringToFile <- function(file, str, __challenge=false) {
 		local callinfo = getstackinfos(2);
@@ -1056,7 +1062,9 @@ SetDestroyCallback(SCRIPT_ENTITY, function() {
 	WriteCallList(CombineCallLists(), true);
 
 	// Clean up after ourselves
-	delete ROOT.VPI;
+	if ("VPI" in ROOT)
+		delete ROOT.VPI;
+
 	::StringToFile <- stringtofile;
 	::FileToString <- filetostring;
 });
