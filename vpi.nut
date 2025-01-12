@@ -8,7 +8,7 @@
 
 // Token used to verify the identity of the functions we expose to the public to prevent tampering
 // If they do not return this secret when prompted the program will abort
-// Do not put this token into a variable as error locals traces can give away its value
+// Avoid putting this token into a variable as error locals traces can give away its value
 local function GetSecret() {
 	return "<Your token goes here>";
 }
@@ -54,24 +54,37 @@ local ROOT = getroottable();
 local stringtofile = ::StringToFile;
 local filetostring = ::FileToString;
 
+local challenge_response;
 local function ValidateIntegrity()
 {
+	local function Validate(challenge)
+	{
+		local response = challenge_response;
+		challenge_response = null;
+		
+		return ( response == GetSecret() );
+	}
+
 	try
 	{
 		if (PROTECTED_FILE_FUNCTIONS)
 		{
-			if (::StringToFile(null, null, true) != GetSecret()) throw null;
-			if (::FileToString(null, true) != GetSecret()) throw null;
+			if ( !Validate(::StringToFile(null, null, true)) ) throw null;
+			if ( !Validate(::FileToString(null, true)) )       throw null;
 		}
 
 		if ("VPI" in ROOT)
 		{
-			if (VPI.Call(null, null, null, null, true) != GetSecret()) throw null;
-			if (VPI.AsyncCall(null, true) != GetSecret()) throw null;
-			if (VPI.ChainCall(null, null, null, true) != GetSecret()) throw null;
+			if ( !Validate(VPI.Call(null, null, null, null, true)) ) throw null;
+			if ( !Validate(VPI.AsyncCall(null, true)) )              throw null;
+			if ( !Validate(VPI.ChainCall(null, null, null, true)) )  throw null;
 		}
 	}
-	catch (e) { throw "[VPI ERROR] *** POSSIBLE VPI FUNCTION TAMPERING, ABORTING ***" }
+	catch (e)
+	{
+		challenge_response = null;
+		throw "[VPI ERROR] *** POSSIBLE VPI FUNCTION TAMPERING, ABORTING ***"
+	}
 }
 
 if (PROTECTED_FILE_FUNCTIONS)
@@ -106,8 +119,9 @@ if (PROTECTED_FILE_FUNCTIONS)
 		local callinfo = getstackinfos(2);
 		if (__challenge)
 		{
-			if (callinfo.src != "vpi.nut") return;
-			else return GetSecret();
+			if (callinfo.src == "vpi.nut")
+				challenge_response = GetSecret();
+			return;
 		}
 
 		if (typeof(file) != "string") return;
@@ -121,8 +135,9 @@ if (PROTECTED_FILE_FUNCTIONS)
 		local callinfo = getstackinfos(2);
 		if (__challenge)
 		{
-			if (callinfo.src != "vpi.nut") return;
-			else return GetSecret();
+			if (callinfo.src == "vpi.nut")
+				challenge_response = GetSecret();
+			return;
 		}
 
 		if (typeof(file) != "string") return;
@@ -891,8 +906,9 @@ local function GetCallFromArg(src, arg)
 		local callinfo = getstackinfos(2);
 		if (__challenge)
 		{
-			if (callinfo.src != "vpi.nut") return;
-			else return GetSecret();
+			if (callinfo.src == "vpi.nut")
+				challenge_response = GetSecret();
+			return;
 		}
 
 		if (!ValidateCaller(callinfo.src, func)) return;
@@ -905,8 +921,9 @@ local function GetCallFromArg(src, arg)
 		local callinfo = getstackinfos(2);
 		if (__challenge)
 		{
-			if (callinfo.src != "vpi.nut") return;
-			else return GetSecret();
+			if (callinfo.src == "vpi.nut")
+				challenge_response = GetSecret();
+			return;
 		}
 
 		local call = GetCallFromArg(callinfo.src, table_or_call);
@@ -933,8 +950,9 @@ local function GetCallFromArg(src, arg)
 		local callinfo = getstackinfos(2);
 		if (__challenge)
 		{
-			if (callinfo.src != "vpi.nut") return;
-			else return GetSecret();
+			if (callinfo.src == "vpi.nut")
+				challenge_response = GetSecret();
+			return;
 		}
 
 		if (typeof(calls) != "array" || !calls.len()) return;
