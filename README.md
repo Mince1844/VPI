@@ -1,5 +1,5 @@
 # Overview
-VPI (VScript-Python Interface) is a system for communication between a VScript Squirrel VM and a Python backend for a Team Fortress 2 game server.
+VPI (VScript-Python Interface) is a system for communication between a VScript Squirrel VM and Python backend for a Team Fortress 2 game server.
 
 # Installation
 - In the server's /tf/scripts/vscripts/ directory, place **vpi.nut** in there. If you already have a **mapspawn.nut**, just copy the contents of the file provided in this repo to that one, otherwise copy that over too.
