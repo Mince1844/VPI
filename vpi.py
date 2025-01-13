@@ -6,13 +6,21 @@
 import os
 import datetime
 import time
+import math
 import json
 import importlib
 import asyncio
 import aiomysql
 import argparse
+from   random import randint
 
 import vpi_interfaces
+
+# This should be the same token returned in the GetSecret function in vpi.nut
+# It's used to identify files created by VPI
+SECRET = r""
+if (not SECRET):
+	raise RuntimeError("Please set your secret token")
 
 PARSER = argparse.ArgumentParser()
 PARSER.add_argument("--host", help="Hostname for database connection", type=str)
@@ -83,6 +91,57 @@ class Encoder(json.JSONEncoder):
 		else:
 			return super().default(o)
 
+# Emulate behavior of modulus in C / Squirrel
+def mod(a, b):
+    return (a % b + b) % b
+
+# Simple encryption algorithm based on timestamp, time, and a key
+def Encrypt(string):
+	timestamp = int(round(time.time()))
+
+	# Add a bit of randomness
+	t = mod(timestamp, 1024)        # Sin doesn't give good output for large values, keep things small
+	f = math.fabs(math.sin(16 * t)) # Give our time a bit of variance
+	h = math.floor(f * 127 + 0.5)   # Get a hash value from 0 - 127 (really this could be any number though)
+
+	# Initialization vector to provide true randomness since we always use the same key
+	# Without this the output tends to repeat quite often
+	iv = ""
+	for ch in string:
+		iv += chr(randint(35, 126))
+
+	enc = ""
+	for i, ch in enumerate(string):
+		key_index = mod(i, len(SECRET)) # Corresponding index in our key, loop if necessary
+		key_char  = SECRET[key_index]
+
+		# Encode the character; shifted using hash and key_char; limited to 32 - 127 ASCII
+		enc += chr(32 + mod(ord(ch) + h + ord(iv[i]) + ord(key_char), 95))
+
+	return {
+		"enc"       : enc,
+		"iv"        : iv,
+		"timestamp" : timestamp,
+		"ticks"     : 0,
+	}
+
+# Decryption
+def Decrypt(enc, iv, timestamp, ticks):
+	t = mod(timestamp + ticks, 1024)
+	f = math.fabs(math.sin(16 * t))
+	h = math.floor(f * 127 + 0.5)
+
+	dec = ""
+	for i, ch in enumerate(enc):
+		key_index = mod(i, len(SECRET))
+		key_char  = SECRET[key_index]
+
+		dec_char = mod(ord(ch) - 32 - h - ord(iv[i]) - ord(key_char), 95)
+		if (dec_char < 32):
+			dec_char += 95 * math.ceil((32 - dec_char) / 95.0)
+		dec += chr(dec_char)
+
+	return dec
 
 # Grab the hostname from a path
 def GetHostname(path):
@@ -221,6 +280,11 @@ def ExtractCallsFromFile(path):
 				contents = contents[:-1]
 
 			data = json.loads(contents)
+
+			ident = Decrypt(**data["Identity"])
+			if (ident != SECRET):
+				print(f"Invalid identification received from client in \"{path}\"")
+				return
 
 			host = GetHostname(path)
 			if (host not in calls):

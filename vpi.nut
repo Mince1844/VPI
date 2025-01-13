@@ -3,14 +3,29 @@
 
 // Made by Mince (STEAM_0:0:41588292)
 
-//////////////////////////////////////////  SCRIPT VARS  //////////////////////////////////////////
+////////////////////////////////////////// SCRIPT VARS //////////////////////////////////////////
 // Server owners modify this section
+
+/*
+// Uncomment and use this on a listen server to generate a secret before you do anything
+::GenerateSecret <- function(n=128) {
+	local s = "";
+	for (local i = 0; i < n; ++i)
+	{
+		// 35 instead of 32 so user doesn't have to deal with quotations
+		s += randomint(35, 126).tochar();
+	}
+	printl(s);
+	return s;
+};
+*/
 
 // Token used to verify the identity of the functions we expose to the public to prevent tampering
 // If they do not return this secret when prompted the program will abort
+// Also used to prove our identity to server
 // Avoid putting this token into a variable as error locals traces can give away its value
 local function GetSecret() {
-	return "<Your token goes here>";
+	return @"";
 }
 
 // Note: This only works to ensure security if vpi.nut is executed within mapspawn.nut
@@ -43,7 +58,7 @@ local urgent_write_count     = 0;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-if (GetSecret() == "<Your token goes here>") throw "[VPI ERROR] Please set your secret token";
+if (!GetSecret().len()) throw "[VPI ERROR] Please set your secret token";
 
 local lateload = (Entities.FindByName(null, "bignet") != null);
 if (lateload)
@@ -53,15 +68,17 @@ local ROOT = getroottable();
 
 local stringtofile = ::StringToFile;
 local filetostring = ::FileToString;
+local randomint    = ::RandomInt;
 
 local challenge_response;
+local should_write_before_destroy = true;
 local function ValidateIntegrity()
 {
 	local function Validate(challenge)
 	{
 		local response = challenge_response;
 		challenge_response = null;
-		
+
 		return ( response == GetSecret() );
 	}
 
@@ -79,10 +96,13 @@ local function ValidateIntegrity()
 			if ( !Validate(VPI.AsyncCall(null, true)) )              throw null;
 			if ( !Validate(VPI.ChainCall(null, null, null, true)) )  throw null;
 		}
+
+		if (::RandomInt.tostring().find("native function") == null) throw null;
 	}
 	catch (e)
 	{
 		challenge_response = null;
+		should_write_before_destroy = false;
 		throw "[VPI ERROR] *** POSSIBLE VPI FUNCTION TAMPERING, ABORTING ***"
 	}
 }
@@ -198,7 +218,7 @@ local EPOCH = {
 };
 
 
-//////////////////////////////////////////////  JSON  /////////////////////////////////////////////
+////////////////////////////////////////////// JSON /////////////////////////////////////////////
 // Based on implementation: https://github.com/electricimp/JSONEncoder/blob/v2.0.0/JSONEncoder.class.nut
 
 // Max depth for encoding objects
@@ -614,6 +634,62 @@ local function Timestamp(time=null, epoch=null, timezone={dir=1,hour=5,minute=0}
 	return seconds;
 }
 
+// Simple encryption algorithm based on timestamp, time, and a key
+local function Encrypt(str)
+{
+	local timestamp = Timestamp();
+	local time      = (Time() / 0.015).tointeger();
+
+	// Add a bit of randomness
+	local t = (timestamp + time) % 1024; // Sin doesn't give good output for large values, keep things small
+	local f = fabs(sin(16 * t));         // Give our time a bit of variance
+	local h = floor(f * 127 + 0.5);      // Get a hash value from 0 - 127 (really this could be any number though)
+
+	// Initialization vector to provide true randomness since we always use the same key
+	// Without this the output tends to repeat quite often
+	local iv = "";
+	foreach (ch in str)
+		iv += randomint(35, 126).tochar();
+
+	local enc = "";
+	foreach (i, ch in str)
+	{
+		local key_index = i % GetSecret().len();  // Corresponding index in our key, loop if necessary
+		local key_char  = GetSecret()[key_index];
+
+		// Encode the character; shifted using hash and key_char; limited to 32 - 127 ASCII
+		enc += (32 + (ch + h + iv[i] + key_char) % 95).tochar();
+	}
+
+	return {
+		enc       = enc,
+		iv        = iv,
+		timestamp = timestamp,
+		ticks     = time,
+	};
+}
+// Decryption
+local function Decrypt(enc, iv, timestamp, ticks)
+{
+	local t = (timestamp + ticks) % 1024;
+	local f = fabs(sin(16 * t));
+	local h = floor(f * 127 + 0.5);
+
+	local dec = "";
+	foreach (i, ch in enc)
+	{
+		local key_index = i % GetSecret().len();
+		local key_char  = GetSecret()[key_index];
+
+		local dec_char = (ch - 32 - h - iv[i] - key_char) % 95;
+		if (dec_char < 32)
+			dec_char += 95 * ceil((32 - dec_char) / 95.0);
+		dec += dec_char.tochar();
+	}
+
+	return dec;
+}
+
 local function SetDestroyCallback(entity, callback)
 {
 	entity.ValidateScriptScope();
@@ -713,10 +789,10 @@ local VPICallInfo = class
 		local script = s;
 		GetScript    = function() { return script };
 
-		func        = f;
-		urgent      = u;
-		callback    = c;
-		kwargs      = k;
+		func     = f;
+		urgent   = u;
+		callback = c;
+		kwargs   = k;
 	}
 }
 
@@ -739,6 +815,9 @@ local function EncodeOutput(list)
 {
 	// This structure gets turned into JSON
 	local table = { "Calls":{"async":[], "chain":[]} };
+
+	// Encrypt our secret and send it to the server for verification
+	table.Identity <- Encrypt(GetSecret());
 
 	// We don't want every member of VPICallInfo to be sent to server
 	// Make a table of only what's needed
@@ -887,10 +966,10 @@ local function GetCallFromArg(src, arg)
 		if (arg instanceof VPICallInfo) return arg;
 		else if (typeof(arg) == "table")
 		{
-			local func = arg.func;
-			local kwargs   = ("kwargs" in arg)   ? arg.kwargs   : null;
+			local func     = arg.func;
+			local kwargs   = ("kwargs"   in arg) ? arg.kwargs   : null;
 			local callback = ("callback" in arg) ? arg.callback : null;
-			local urgent   = ("urgent" in arg)   ? arg.urgent   : null;
+			local urgent   = ("urgent"   in arg) ? arg.urgent   : null;
 
 			return VPICallInfo(GetSecret(), src, func, kwargs, callback, urgent);
 		}
@@ -988,7 +1067,7 @@ local function GetCallFromArg(src, arg)
 		}
 
 		// The server uses the last call's info to determine if it needs to send back results
-		local last = new_calls.top();
+		local last    = new_calls.top();
 		last.token    = token;
 		last.callback = (last.token) ? true : false;
 
@@ -1077,7 +1156,8 @@ AddThinkToEnt(SCRIPT_ENTITY, "Think");
 
 // Make sure we get any pending calls out to the server
 SetDestroyCallback(SCRIPT_ENTITY, function() {
-	WriteCallList(CombineCallLists(), true);
+	if (should_write_before_destroy)
+		WriteCallList(CombineCallLists(), true);
 
 	// Clean up after ourselves
 	if ("VPI" in ROOT)
