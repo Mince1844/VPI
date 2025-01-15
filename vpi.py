@@ -8,67 +8,32 @@ import datetime
 import time
 import math
 import json
-import importlib
 import asyncio
-import aiomysql
-import argparse
+import importlib
 from   random import randint
 
+import vpi_config
 import vpi_interfaces
-
-# This should be the same token returned in the GetSecret function in vpi.nut
-# It's used to identify files created by VPI
-SECRET = r""
-if (not SECRET):
-	raise RuntimeError("Please set your secret token")
-
-PARSER = argparse.ArgumentParser()
-PARSER.add_argument("--host", help="Hostname for database connection", type=str)
-PARSER.add_argument("-u", "--user", help="User for database connection", type=str)
-PARSER.add_argument("-p", "--port", help="Port for database connection", type=int)
-PARSER.add_argument("-db", "--database", help="Database to use", type=str)
-PARSER.add_argument("--password", help="Password for database connection", type=str)
-
-args = PARSER.parse_args()
-
-############################################ ENV VARS #############################################
-# Server owners modify this section
-
-genv = os.environ.get
-
-# Modify VPI_* with your environment variables if you named them something else
-DB_HOST     = args.host     if args.host     else genv("VPI_HOST",      "localhost")
-DB_USER     = args.user     if args.user     else genv("VPI_USER",      "user")
-DB_PORT	    = args.port     if args.port     else int(genv("VPI_PORT",  3306))
-DB_DATABASE	= args.database if args.database else genv("VPI_INTERFACE", "interface")
-DB_PASSWORD	= args.password if args.password else genv("VPI_PASSWORD")
-
-SCRIPTDATA_DIR = genv("VPI_SCRIPTDATA_DIR", r"C:\Program Files (x86)\Steam\steamapps\common\Team Fortress 2\tf\scriptdata")
-
-# ----
-
-# Validation
-for env in [DB_HOST, DB_USER, DB_PORT, DB_DATABASE, SCRIPTDATA_DIR]:
-	assert env is not None
-
-if (DB_PASSWORD is None):
-	DB_PASSWORD = input(f"Enter password for {DB_USER}@{DB_HOST}:{DB_PORT} >>> ")
-	print()
-
-if (not os.path.exists(SCRIPTDATA_DIR)): raise RuntimeError("SCRIPTDATA_DIR does not exist")
 
 ###################################################################################################
 
 # {
-#	  "<host>": {
-#		  "async": [ {...}, {...} ],
-#		  "chain": [
-#			  [ {...}, {...} ],
-#			  []
-#		  ]
-#	  }
+#		"<host>": {
+#			"restart_modtime": <num>,
+#			"paths": {
+#				"<filepath>": {
+#					"modtime": <num>,
+#					"async": [ {...}, {...} ],
+#					"chain": [
+#						[ {...}, {...} ],
+#						[ {...}, {...} ],
+#					]
+#				}
+#			}
+#		}
 # }
 calls = {}
+
 
 # {
 #	  "<host>": {
@@ -112,8 +77,8 @@ def Encrypt(string):
 
 	enc = ""
 	for i, ch in enumerate(string):
-		key_index = mod(i, len(SECRET)) # Corresponding index in our key, loop if necessary
-		key_char  = SECRET[key_index]
+		key_index = mod(i, len(vpi_config.SECRET)) # Corresponding index in our key, loop if necessary
+		key_char  = vpi_config.SECRET[key_index]
 
 		# Encode the character; shifted using hash and key_char; limited to 32 - 127 ASCII
 		enc += chr(32 + mod(ord(ch) + h + ord(iv[i]) + ord(key_char), 95))
@@ -133,8 +98,8 @@ def Decrypt(enc, iv, timestamp, ticks):
 
 	dec = ""
 	for i, ch in enumerate(enc):
-		key_index = mod(i, len(SECRET))
-		key_char  = SECRET[key_index]
+		key_index = mod(i, len(vpi_config.SECRET))
+		key_char  = vpi_config.SECRET[key_index]
 
 		dec_char = mod(ord(ch) - 32 - h - ord(iv[i]) - ord(key_char), 95)
 		if (dec_char < 32):
@@ -158,7 +123,7 @@ def WriteCallbacksToFile():
 	delete = []
 
 	for host, info in callbacks.items():
-		path = os.path.join(SCRIPTDATA_DIR, f"{host}_vpi_input.interface")
+		path = os.path.join(vpi_config.SCRIPTDATA_DIR, f"{host}_vpi_input.interface")
 		with open(path, "a+") as f:
 			# "a+" file mode seeks to the end of the file, need to go back to the beginning
 			f.seek(0)
@@ -172,7 +137,9 @@ def WriteCallbacksToFile():
 			# Wipe the file
 			f.truncate(0)
 
-			table    = {"Calls": info}
+			table = {"Calls": info}
+			table["Identity"] = Encrypt(vpi_config.SECRET)
+
 			string   = json.dumps(table, cls=Encoder)
 			overflow = {}
 
@@ -229,37 +196,43 @@ async def ExecCalls():
 			if (not func.startswith("VPI_")): continue
 			try:
 				func = getattr(vpi_interfaces, func)
-				result = await func(call, POOL)
+				result = await func(call)
 			except:
 				continue
 
 		return result
 
 	# Prepare calls
-	for host, table in calls.items():
-		# Async calls can just be added to tasks directly
-		for call in table["async"]:
-			func = call["func"]
-			if (not func.startswith("VPI_")): continue
-			try:
-				func = getattr(vpi_interfaces, func)
-				tasks.append(func(call, POOL))
-				contexts.append({"host":host, "call":call})
-			except:
-				continue
+	for host, t1 in calls.items():
+		restart_modtime = t1["restart_modtime"]
+		for path, t2 in t1["paths"].items():
+			modtime = t2["modtime"]
+			# Async calls can just be added to tasks directly
+			for call in t2["async"]:
+				func = call["func"]
+				if (not func.startswith("VPI_")): continue
+				try:
+					func = getattr(vpi_interfaces, func)
+					tasks.append(func(call))
+					contexts.append({"host":host, "call":call} if (modtime >= restart_modtime) else None)
+				except:
+					continue
 
-		# Calls in call chains should be executed synchronously, but still add that to tasks
-		for call_chain in table["chain"]:
-			if (not len(call_chain)): continue
-			last = call_chain[-1]
-			tasks.append(ExecCallChain(call_chain))
-			contexts.append({"host":host, "call":last})
+			# Calls in call chains should be executed synchronously, but still add that to tasks
+			for call_chain in t2["chain"]:
+				if (not len(call_chain)): continue
+				last = call_chain[-1]
+				tasks.append(ExecCallChain(call_chain))
+				contexts.append({"host":host, "call":last} if (modtime >= restart_modtime) else None)
 
 	# Go
 	results = await asyncio.gather(*tasks)
 
 	# Set callbacks (to return results to client later)
 	for result, context in zip(results, contexts):
+		# We don't send a response to client for calls from stale files
+		if (context is None): continue
+
 		host  = context["host"]
 		call  = context["call"]
 		token = call["token"]
@@ -282,26 +255,26 @@ def ExtractCallsFromFile(path):
 			data = json.loads(contents)
 
 			ident = Decrypt(**data["Identity"])
-			if (ident != SECRET):
+			if (ident != vpi_config.SECRET):
 				print(f"Invalid identification received from client in \"{path}\"")
 				return
 
 			host = GetHostname(path)
-			if (host not in calls):
-				calls[host] = {"async":[], "chain":[]}
 
-			calls[host]["async"].extend(data["Calls"]["async"])
-			calls[host]["chain"].extend(data["Calls"]["chain"])
+			calls[host]["paths"][path]["async"].extend(data["Calls"]["async"])
+			calls[host]["paths"][path]["chain"].extend(data["Calls"]["chain"])
 
 	except Exception as e:
 		print(f"Invalid input received from client in: \"{path}\"")
 
 
-POOL = None
 async def main():
-	global POOL
-	POOL = await aiomysql.create_pool(host=DB_HOST, user=DB_USER, password=DB_PASSWORD, port=DB_PORT, db=DB_DATABASE, autocommit=False)
-	print(str(POOL) + "\n")
+	if (vpi_config.DB_SUPPORT):
+		if (vpi_config.DB_TYPE == "MySQL"):
+			vpi_config.DB = await vpi_config.aiomysql.create_pool(host=vpi_config.DB_HOST, user=vpi_config.DB_USER, password=vpi_config.DB_PASSWORD, port=vpi_config.DB_PORT, db=vpi_config.DB_DATABASE, autocommit=False)
+		elif (vpi_config.DB_TYPE == "SQLite"):
+			vpi_config.DB = await vpi_config.aiosqlite.connect(vpi_config.DB_LITE)
+		print(str(vpi_config.DB) + "\n")
 
 	global calls
 	global callbacks
@@ -323,19 +296,33 @@ async def main():
 				print("INVALID INTERFACE MODULE CODE!")
 
 
-		files = os.listdir(SCRIPTDATA_DIR)
+		files = os.listdir(vpi_config.SCRIPTDATA_DIR)
 
 		for file in files:
-			path = os.path.join(SCRIPTDATA_DIR, file)
+			path = os.path.join(vpi_config.SCRIPTDATA_DIR, file)
 			host = GetHostname(path)
 			if (not host): continue
 
+			if (host not in calls):
+				calls[host] = { "restart_modtime": 0, "paths": {} }
+
+			path_mtime = os.path.getmtime(path)
+
 			# Client tells us our callbacks list is outdated (e.g. map change)
 			if (file.endswith("_restart.interface")):
+				mtime = calls[host]["restart_modtime"]
+
+				if (path_mtime >= mtime):
+					calls[host]["restart_modtime"] = path_mtime
+
 				if (host in callbacks): del callbacks[host]
 				os.remove(path)
+
 			# Grab info from clients
 			elif (file.endswith("_output.interface")):
+				if (path not in calls[host]["paths"]):
+					calls[host]["paths"][path] = { "modtime": path_mtime, "async": [], "chain": [] }
+
 				ExtractCallsFromFile(path)
 				os.remove(path)
 

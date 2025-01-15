@@ -1,3 +1,20 @@
+// todo
+/*
+	wipe the input file when the script loads
+
+	make sure you cant brick the program via the interface with wrong type args
+	ping system
+
+	readme
+	format output of programs
+	colored output?
+	logging
+	interface functions for
+		restarting the server for updates from github
+		displaying announcements (client needs to ping server)
+		discord
+*/
+
 // VScript-Python Interface
 // Client
 
@@ -56,6 +73,11 @@ local expecting_iters     = null;
 local URGENT_WRITE_MAX_COUNT = 3; // How many urgent calls per WRITE_INTERVAL are allowed
 local urgent_write_count     = 0;
 
+// How many seconds to wait for response before call times out
+local CALLBACK_TIMEOUT = 3.0;
+// How often we check on timeouts (in ticks)
+local CALLBACK_TIMEOUT_CHECK_INTERVAL = 33;
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 if (!GetSecret().len()) throw "[VPI ERROR] Please set your secret token";
@@ -92,9 +114,9 @@ local function ValidateIntegrity()
 
 		if ("VPI" in ROOT)
 		{
-			if ( !Validate(VPI.Call(null, null, null, null, true)) ) throw null;
-			if ( !Validate(VPI.AsyncCall(null, true)) )              throw null;
-			if ( !Validate(VPI.ChainCall(null, null, null, true)) )  throw null;
+			if ( !Validate(VPI.Call(null, null, null, null, null, true)) ) throw null;
+			if ( !Validate(VPI.AsyncCall(null, true)) )                    throw null;
+			if ( !Validate(VPI.ChainCall(null, null, null, null, true)) )  throw null;
 		}
 
 		if (::RandomInt.tostring().find("native function") == null) throw null;
@@ -299,6 +321,66 @@ local function Escape(str)
 	return res;
 }
 
+local function UnEscape(str)
+{
+    local res = "";
+    local i = 0;
+
+    while (i < str.len())
+	{
+        local ch1 = str[i].tochar();
+
+        if (ch1 == "\\" && i + 1 < str.len())
+		{
+            ++i; // Skip the backslash
+
+            ch1 = str[i].tochar();
+
+            // Handle escape sequences
+            if (ch1 == "\"")
+                res += "\"";
+            else if (ch1 == "\\")
+                res += "\\";
+            else if (ch1 == "/")
+                res += "/";
+            else if (ch1 == "b")
+                res += "\b";
+            else if (ch1 == "f")
+                res += "\f";
+            else if (ch1 == "n")
+                res += "\n";
+            else if (ch1 == "r")
+                res += "\r";
+            else if (ch1 == "t")
+                res += "\t";
+            else if (ch1 == "u")
+			{
+                // Handle Unicode escape sequences \uXXXX
+                if (i + 5 < str.len())
+				{
+                    local hex = str.slice(i + 1, i + 5);
+                    local uni = hex.tointeger(16);
+                    res += format("%c", uni);
+                    i += 4; // Skip past the 4 hex digits
+                }
+            }
+			else
+			{
+                res += "\\" + ch1;
+            }
+        }
+		else
+		{
+            // Add non-escaped character to result
+            res += ch1;
+        }
+
+        ++i;
+    }
+
+    return res;
+}
+
 local function Tokenize(str)
 {
 	local tokens = [];
@@ -389,7 +471,7 @@ ParseTokens = function(tokens, start_index=0)
 		obj = false;
 	// String
 	else if (token[0] == '"' && token[token.len()-1] == '"')
-		obj = token.slice(1, -1);
+		obj = UnEscape(token.slice(1, -1));
 	// Float
 	else if (token.find(".") != null || token.find("e") != null)
 	{
@@ -774,10 +856,11 @@ local VPICallInfo = class
 	kwargs   = null;
 	callback = null;
 	urgent   = null;
+	timeout  = null;
 
 	GetScript = null;
 
-	constructor(secret, s=null, f=null, k=null, c=null, u=null)
+	constructor(secret, s=null, f=null, k=null, c=null, u=null, t=null)
 	{
 		if (secret != GetSecret())
 			throw "[VPI ERROR] *** POSSIBLE VPI FUNCTION TAMPERING, ABORTING ***";
@@ -793,6 +876,8 @@ local VPICallInfo = class
 		urgent   = u;
 		callback = c;
 		kwargs   = k;
+
+		timeout  = t;
 	}
 }
 
@@ -828,7 +913,7 @@ local function EncodeOutput(list)
 		foreach (k, v in call.getclass())
 		{
 			if (typeof(v) == "function" && k != "callback") continue;
-			if (k == "urgent") continue;
+			if (k == "urgent" || k == "timeout") continue;
 
 			t[k] <- call[k];
 		}
@@ -859,10 +944,11 @@ local function EncodeOutput(list)
 	return JSON.Encode(table);
 }
 
-// Write interface call to file as JSON
+// Write interface calls to file as JSON
 local last_write_time = null;
 local function WriteCallList(list, combined=false)
 {
+
 	if (!list.async.len() && !list.chain.len()) return 0;
 
 	// Our write file name's uniqueness is based on tick count
@@ -876,6 +962,25 @@ local function WriteCallList(list, combined=false)
 	local output_file = format("%s_vpi_%d_%d_output.interface", hostname, Timestamp(), time / 0.015);
 
 	StringToFile(output_file, EncodeOutput(list));
+
+	// Document the write time for current callbacks
+	foreach (call in list.async)
+	{
+		if (!(call.token in callbacks)) continue;
+
+		local cbt = callbacks[call.token];
+		cbt.calltime = time;
+	}
+	foreach (l in list.chain)
+	{
+		foreach (call in l)
+		{
+			if (!(call.token in callbacks)) continue;
+
+			local cbt = callbacks[call.token];
+			cbt.calltime = time;
+		}
+	}
 
 	// Clear calls
 	if (combined)
@@ -905,49 +1010,67 @@ local function WriteCallList(list, combined=false)
 	return 1;
 }
 
+// Helper for HandleCallbacks
+local function TryExecCallback(token, data, error)
+{
+	if (token in callbacks)
+	{
+		local cbt = callbacks[token];
+
+		try { cbt.callback(data, error); }
+		catch (e) {
+			printl(format("[VPI ERROR] Callback %s failed with error: %s", cbt.callback.tostring(), e));
+		}
+
+		delete callbacks[token];
+	}
+}
+
 // Read callbacks results from the server
 local function HandleCallbacks()
 {
 	// Don't bother reading if we don't have anything to look for
 	if (!callbacks.len()) return;
 
-	// The good thing about a single input file is that it seems VScript stores the
-	// modify time of the file and skips trying to read it if it hasn't changed
-	// As a result reading an unchanged file is much faster, and we can have a relatively
-	// small WATCH_INTERVAL without much complication
 	local contents = FileToString(INPUT_FILE);
-
 	if (!contents || contents == "") return;
+
 	try
 	{
 		local table = JSON.Decode(contents);
 
-		// Look to see if any of our callbacks have results
-		local calls = table.Calls;
-		foreach (token, data in calls)
+		local id = table.Identity;
+		id = Decrypt(id.enc, id.iv, id.timestamp, id.ticks)
+		if (id != GetSecret())
 		{
-			if (!(token in callbacks)) continue;
+			printl(format("[VPI ERROR] INVALID IDENTIFICATION RECEIVED FROM FILE %s", INPUT_FILE));
+			throw null;
+		}
 
-			// Peek at data and print if error
+		local calls = table.Calls;
+
+		// Look to see if any of our callbacks have results
+		foreach (token, cbt in callbacks)
+		{
+			if (!(token in calls)) continue;
+
+			local calldata = calls[token];
+
+			// Peek at calldata and print if error
 			local error = false;
-			if (typeof(data) == "string" && startswith(data, "[VPI ERROR]"))
+			if (typeof(calldata) == "string" && startswith(calldata, "[VPI ERROR]"))
 			{
-				printl(data);
-				data  = null;
+				printl(calldata);
 				error = true;
 			}
 
-			try { callbacks[token](data, error); }
-			catch (e) {
-				printl(format("[VPI ERROR] Callback %s failed with error: %s", callbacks[token].tostring(), e));
-			}
-
-			delete callbacks[token];
+			TryExecCallback(token, calldata, error);
 		}
+
 	}
 	catch (e)
 	{
-		printl("[VPI] INVALID INPUT RECEIVED FROM SERVER");
+		printl("[VPI ERROR] INVALID INPUT RECEIVED FROM SERVER");
 	}
 
 	// Wipe the file to let the server know we've handled its contents
@@ -969,9 +1092,10 @@ local function GetCallFromArg(src, arg)
 			local func     = arg.func;
 			local kwargs   = ("kwargs"   in arg) ? arg.kwargs   : null;
 			local callback = ("callback" in arg) ? arg.callback : null;
+			local timeout  = ("timeout"  in arg) ? arg.timeout  : CALLBACK_TIMEOUT;
 			local urgent   = ("urgent"   in arg) ? arg.urgent   : null;
 
-			return VPICallInfo(GetSecret(), src, func, kwargs, callback, urgent);
+			return VPICallInfo(GetSecret(), src, func, kwargs, callback, urgent, timeout);
 		}
 	}
 	catch (e) {}
@@ -980,7 +1104,7 @@ local function GetCallFromArg(src, arg)
 // Public interface for user scripts
 ::VPI <- {
 	// Create a VPICallInfo instance (we don't want the actual class visible for security)
-	function Call(func, kwargs=null, callback=null, urgent=false, __challenge=false)
+	function Call(func, kwargs=null, callback=null, urgent=false, timeout=CALLBACK_TIMEOUT, __challenge=false)
 	{
 		local callinfo = getstackinfos(2);
 		if (__challenge)
@@ -991,7 +1115,7 @@ local function GetCallFromArg(src, arg)
 		}
 
 		if (!ValidateCaller(callinfo.src, func)) return;
-		return VPICallInfo(GetSecret(), callinfo.src, func, kwargs, callback, urgent);
+		return VPICallInfo(GetSecret(), callinfo.src, func, kwargs, callback, urgent, timeout);
 	},
 
 	// Queue a call to be sent to the server which will be interpreted asynchronously
@@ -1018,13 +1142,13 @@ local function GetCallFromArg(src, arg)
 		list.append(call);
 
 		if (typeof(call.callback) == "function")
-			callbacks[call.token] <- call.callback;
+			callbacks[call.token] <- { callback=call.callback, calltime=null, timeout=call.timeout };
 
 		return true;
 	},
 
 	// Queue a list of calls to be sent to the server which will be interpreted synchronously
-	function ChainCall(calls, callback=null, urgent=false, __challenge=false)
+	function ChainCall(calls, callback=null, urgent=false, timeout=CALLBACK_TIMEOUT, __challenge=false)
 	{
 		local callinfo = getstackinfos(2);
 		if (__challenge)
@@ -1048,10 +1172,6 @@ local function GetCallFromArg(src, arg)
 			if (call.token in used_tokens) return;
 			used_tokens[call.token] <- null;
 
-			// We handle these a few lines down
-			call.token    = null;
-			call.callback = false;
-
 			new_calls.append(call);
 		}
 
@@ -1063,7 +1183,7 @@ local function GetCallFromArg(src, arg)
 		if (typeof(callback) == "function")
 		{
 			token = UniqueString();
-			callbacks[token] <- callback;
+			callbacks[token] <- { callback=callback, calltime=null, timeout=timeout };
 		}
 
 		// The server uses the last call's info to determine if it needs to send back results
@@ -1099,7 +1219,8 @@ if (!SCRIPT_ENTITY)
 SCRIPT_ENTITY.ValidateScriptScope();
 local SCRIPT_SCOPE = SCRIPT_ENTITY.GetScriptScope();
 
-SCRIPT_SCOPE.tickcount <- 0;
+SCRIPT_SCOPE.readwritetick <- 0;
+SCRIPT_SCOPE.ticks <- 0;
 SCRIPT_SCOPE.Think <- function() {
 	// Check for tampering
 	try { ValidateIntegrity(); }
@@ -1117,7 +1238,7 @@ SCRIPT_SCOPE.Think <- function() {
 		// Read more frequently
 		if (expecting_iters != null && expecting_iters < MAX_EXPECTING_ITERS)
 		{
-			if (tickcount % EXPECTING_INTERVAL == 0)
+			if (readwritetick % EXPECTING_INTERVAL == 0)
 			{
 				++expecting_iters;
 				HandleCallbacks();
@@ -1125,7 +1246,7 @@ SCRIPT_SCOPE.Think <- function() {
 		}
 		// Normal read interval
 		else
-			if (tickcount % WATCH_INTERVAL == 0 && callbacks.len())
+			if (readwritetick % WATCH_INTERVAL == 0 && callbacks.len())
 				HandleCallbacks();
 	}
 
@@ -1141,14 +1262,29 @@ SCRIPT_SCOPE.Think <- function() {
 		if (result) ++urgent_write_count; // Only increment if we actually wrote to file
 	}
 	// Write everything we've accumulated
-	else if (tickcount % WRITE_INTERVAL == 0)
+	else if (readwritetick % WRITE_INTERVAL == 0)
 	{
 		urgent_write_count = 0;
 		result = WriteCallList(CombineCallLists(), true);
 	}
 
+	// Check for callback timeout
+	if (ticks % CALLBACK_TIMEOUT_CHECK_INTERVAL == 0)
+	{
+		local time = Time();
+		foreach (token, cbt in callbacks)
+		{
+			if (cbt.calltime == null || time < (cbt.calltime + cbt.timeout)) continue;
+
+			printl(format("[VPI ERROR] Callback %s timed out", cbt.callback.tostring()));
+			TryExecCallback(token, "[VPI ERROR] TIMEOUT", true);
+		}
+	}
+
 	// Don't increment if we failed to write because we already wrote this tick
-	if (result != -1) ++tickcount;
+	if (result != -1) ++readwritetick;
+
+	++ticks;
 
 	return -1;
 };

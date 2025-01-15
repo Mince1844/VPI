@@ -1,6 +1,7 @@
-import asyncio
 import functools
 import re
+
+import vpi_config
 
 # Note:
 # All interface functions should be decorated with either WrapDB or WrapInterface
@@ -52,8 +53,16 @@ def ValidateUserTable(info, table):
 # Wrapper for DB interface functions
 def WrapDB(func):
 	@functools.wraps(func)
-	async def inner(info, pool):
-		conn   = await pool.acquire()
+	async def inner(info):
+		if (vpi_config.DB_TYPE == "MySQL"):
+			# Pool
+			conn = await vpi_config.DB.acquire()
+		elif (vpi_config.DB_TYPE == "SQLite"):
+			# Connection
+			conn = vpi_config.DB
+		else:
+			return
+
 		cursor = await conn.cursor()
 
 		result = None
@@ -70,7 +79,9 @@ def WrapDB(func):
 			await cursor.close()
 			if (error is None):
 				await conn.commit()
-			pool.release(conn)
+
+			if (vpi_config.DB_TYPE == "MySQL"):
+				vpi_config.DB.release(conn)
 
 			if (error is None): return result
 			else:				return error
@@ -80,12 +91,12 @@ def WrapDB(func):
 # Wrapper for generic interface functions
 def WrapInterface(func):
 	@functools.wraps(func)
-	async def inner(*args, **kwargs):
+	async def inner(info):
 		result = None
 		error  = None
 
 		try:
-			result = await func(*args, **kwargs)
+			result = await func(info)
 		except Exception as e:
 			# Client expects this to start with [VPI ERROR]
 			error = f"[VPI ERROR] ({func.__name__}) :: {type(e).__name__}"
