@@ -3,6 +3,8 @@ import re
 
 import vpi_config
 
+LOGGER = vpi_config.LOGGER
+
 # Note:
 # All interface functions should be decorated with either WrapDB or WrapInterface
 # Otherwise any errors that occur will not be handled gracefully and brick the entire program
@@ -54,27 +56,23 @@ def ValidateUserTable(info, table):
 def WrapDB(func):
 	@functools.wraps(func)
 	async def inner(info):
-		if (vpi_config.DB_TYPE == "MySQL"):
-			# Pool
-			conn = await vpi_config.DB.acquire()
-		elif (vpi_config.DB_TYPE == "SQLite"):
-			# Connection
-			conn = vpi_config.DB
-		else:
-			return
-
-		cursor = await conn.cursor()
+		try:
+			conn   = await vpi_config._GetDBConnection()
+			cursor = await conn.cursor()
+		except Exception as e:
+			LOGGER.error("Failed to establish connection to database in WrapDB due to error:", exc_info=True)
+			error = f"[VPI ERROR] ({func.__name__}) :: {type(e).__name__}"
+			return error
 
 		result = None
 		error  = None
 
 		try:
 			result = await func(info, cursor)
+			LOGGER.debug("Executing interface function with info: %s", info)
 		except Exception as e:
-			# Client expects error responses to start with [VPI ERROR]
+			LOGGER.error("Failed to execute interface function due to error:", exc_info=True)
 			error = f"[VPI ERROR] ({func.__name__}) :: {type(e).__name__}"
-			print(error)
-			print(e)
 		finally:
 			await cursor.close()
 			if (error is None):
@@ -85,6 +83,9 @@ def WrapDB(func):
 
 			if (error is None): return result
 			else:				return error
+
+	# So we can check elsewhere if a specified function was a result of this wrapper
+	inner.__WrapDB__ = True
 
 	return inner
 
@@ -97,11 +98,10 @@ def WrapInterface(func):
 
 		try:
 			result = await func(info)
+			LOGGER.debug("Executing interface function with info: %s", info)
 		except Exception as e:
-			# Client expects this to start with [VPI ERROR]
+			LOGGER.error("Failed to execute interface function due to error:", exc_info=True)
 			error = f"[VPI ERROR] ({func.__name__}) :: {type(e).__name__}"
-			print(error)
-			print(e)
 		finally:
 			if (error is None): return result
 			else:				return error

@@ -3,6 +3,8 @@
 
 # Made by Mince (STEAM_0:0:41588292)
 
+VERSION = "1.0.0"
+
 import os
 import datetime
 import time
@@ -15,6 +17,8 @@ from   random import randint
 import vpi_config
 import vpi_interfaces
 
+LOGGER = vpi_config.LOGGER
+
 ###################################################################################################
 
 # {
@@ -24,10 +28,6 @@ import vpi_interfaces
 #				"<filepath>": {
 #					"modtime": <num>,
 #					"async": [ {...}, {...} ],
-#					"chain": [
-#						[ {...}, {...} ],
-#						[ {...}, {...} ],
-#					]
 #				}
 #			}
 #		}
@@ -188,42 +188,34 @@ async def ExecCalls():
 	tasks	 = [] # Tasks to gather
 	contexts = [] # Needed context for parsing task results
 
-	# Execute calls in call chain synchronously
-	async def ExecCallChain(call_chain):
-		result = None
-		for call in call_chain:
-			func = call["func"]
-			if (not func.startswith("VPI_")): continue
-			try:
-				func = getattr(vpi_interfaces, func)
-				result = await func(call)
-			except:
-				continue
-
-		return result
+	db_connected = await vpi_config.PingDB()
+	if (not db_connected):
+		LOGGER.warning("Could not establish connection to database! DB functions will be postponed")
 
 	# Prepare calls
 	for host, t1 in calls.items():
 		restart_modtime = t1["restart_modtime"]
-		for path, t2 in t1["paths"].items():
+		for path, t2 in t1["paths"].copy().items():
 			modtime = t2["modtime"]
-			# Async calls can just be added to tasks directly
-			for call in t2["async"]:
+
+			for call in t2["async"].copy():
 				func = call["func"]
-				if (not func.startswith("VPI_")): continue
-				try:
+
+				if (func.startswith("VPI_")):
 					func = getattr(vpi_interfaces, func)
+
+					# We don't have a connection to the DB so don't bother
+					if (not db_connected and hasattr(func, "__WrapDB__")): continue
+
 					tasks.append(func(call))
 					contexts.append({"host":host, "call":call} if (modtime >= restart_modtime) else None)
-				except:
-					continue
 
-			# Calls in call chains should be executed synchronously, but still add that to tasks
-			for call_chain in t2["chain"]:
-				if (not len(call_chain)): continue
-				last = call_chain[-1]
-				tasks.append(ExecCallChain(call_chain))
-				contexts.append({"host":host, "call":last} if (modtime >= restart_modtime) else None)
+				t2["async"].remove(call)
+
+			# No more calls to handle
+			if (not len(t2["async"])):
+				del t1["paths"][path]
+				continue
 
 	# Go
 	results = await asyncio.gather(*tasks)
@@ -256,25 +248,27 @@ def ExtractCallsFromFile(path):
 
 			ident = Decrypt(**data["Identity"])
 			if (ident != vpi_config.SECRET):
-				print(f"Invalid identification received from client in \"{path}\"")
+				LOGGER.warning("Invalid identification in file: %s; ignoring", path)
 				return
 
 			host = GetHostname(path)
 
 			calls[host]["paths"][path]["async"].extend(data["Calls"]["async"])
-			calls[host]["paths"][path]["chain"].extend(data["Calls"]["chain"])
 
 	except Exception as e:
-		print(f"Invalid input received from client in: \"{path}\"")
+		LOGGER.warning("Invalid structure in file: %s; ignoring", path)
 
 
 async def main():
-	if (vpi_config.DB_SUPPORT):
-		if (vpi_config.DB_TYPE == "MySQL"):
-			vpi_config.DB = await vpi_config.aiomysql.create_pool(host=vpi_config.DB_HOST, user=vpi_config.DB_USER, password=vpi_config.DB_PASSWORD, port=vpi_config.DB_PORT, db=vpi_config.DB_DATABASE, autocommit=False)
-		elif (vpi_config.DB_TYPE == "SQLite"):
-			vpi_config.DB = await vpi_config.aiosqlite.connect(vpi_config.DB_LITE)
-		print(str(vpi_config.DB) + "\n")
+	LOGGER.info("VScript-Python Interface Server version %s startup", VERSION)
+
+	if (vpi_config.DB_TYPE == "MySQL"):
+		vpi_config.DB = await vpi_config.aiomysql.create_pool(host=vpi_config.DB_HOST, user=vpi_config.DB_USER, password=vpi_config.DB_PASSWORD, port=vpi_config.DB_PORT, db=vpi_config.DB_DATABASE, autocommit=False)
+	elif (vpi_config.DB_TYPE == "SQLite"):
+		vpi_config.DB = await vpi_config.aiosqlite.connect(vpi_config.DB_LITE)
+
+	if (vpi_config.DB is not None):
+		LOGGER.info("Connected to %s database using %s", vpi_config.DB_TYPE, str(vpi_config.DB))
 
 	global calls
 	global callbacks
@@ -292,8 +286,9 @@ async def main():
 			last_interface_modtime = last_modtime
 			try:
 				importlib.reload(vpi_interfaces)
+				LOGGER.info("Successfully hot-loaded changes to vpi_interfaces.py")
 			except:
-				print("INVALID INTERFACE MODULE CODE!")
+				LOGGER.error("Failed to hot-load changes to vpi_interfaces.py due to error:", exc_info=True)
 
 
 		files = os.listdir(vpi_config.SCRIPTDATA_DIR)
@@ -321,7 +316,7 @@ async def main():
 			# Grab info from clients
 			elif (file.endswith("_output.interface")):
 				if (path not in calls[host]["paths"]):
-					calls[host]["paths"][path] = { "modtime": path_mtime, "async": [], "chain": [] }
+					calls[host]["paths"][path] = { "modtime": path_mtime, "async": [] }
 
 				ExtractCallsFromFile(path)
 				os.remove(path)
@@ -331,8 +326,5 @@ async def main():
 
 		# Send results to clients
 		WriteCallbacksToFile()
-
-		calls = {}
-
 
 asyncio.run(main())
