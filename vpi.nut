@@ -67,23 +67,21 @@ local CALLBACK_TIMEOUT_CHECK_INTERVAL = 33; // 0.5s
 
 // Bit flags for what messages to output to users
 // 0  - Silent
-// 1  - Startup message
+// 1  - Debug
 // 2  - Errors
 // 4  - Warnings
-// 8  - Debug
-// 16 - Misc
-//    -
-// 23 - (ALL - DEBUG)
-// 31 - (ALL)
-local LOG_MSG_LEVEL = 31;
+// 8  - Misc
+// --------------
+// 14 - (ALL - DEBUG)
+// 15 - (ALL)
+local LOG_MSG_LEVEL = 14;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-local MSG_STARTUP = 1;
+local MSG_DEBUG   = 1;
 local MSG_ERROR   = 2;
 local MSG_WARNING = 4;
-local MSG_DEBUG   = 8;
-local MSG_MISC    = 16;
+local MSG_MISC    = 8;
 
 local NOTIFY_CONSOLE = 1;
 local NOTIFY_CHAT    = 2;
@@ -241,27 +239,35 @@ local call_list = {
 local callbacks   = {};
 local used_tokens = {};
 
-// Strip hostname of characters other than [a-z0-9_]
-local hostname = Convars.GetStr("hostname").tolower();
-try
+// We delay sending calls until this is true so hostname can have the proper value
+local server_cfg_execd = false;
+local HOSTNAME;
+
+local function GetSanitizedHostname()
 {
-	local str = "";
-	foreach (code in hostname)
+	// Strip hostname of characters other than [a-z0-9_]
+	try
 	{
-		if (code < 33 && !endswith(hostname, "_"))
+		local hostname = Convars.GetStr("hostname").tolower();
+		local str = "";
+		foreach (code in hostname)
 		{
-			str += "_";
-			continue;
+			if (code < 33 && !endswith(hostname, "_"))
+			{
+				str += "_";
+				continue;
+			}
+			if (code < 48 || (code > 57 && code < 97) || code > 122) continue;
+
+			str += code.tochar();
 		}
-		if (code < 48 || (code > 57 && code < 97) || code > 122) continue;
-
-		str += code.tochar();
+		return str;
 	}
-	hostname = str;
+	catch (e)
+		return "team_fortress"
 }
-catch (e) {}
 
-local INPUT_FILE = hostname + "_vpi_input.interface";
+local INPUT_FILE;
 
 local MAX_FILE_SIZE = 16000;
 local INT_MAX       = 2147483647;
@@ -982,7 +988,7 @@ local function WriteCallList(list, combined=false)
 	// Reading files seems to be about 3x as expensive as writing
 	// If we used a single output file we would have to read to see if we can write,
 	// so the simple solution is to base file name off timestamp and tick count and let the server handle the hard work
-	local output_file = format("%s_vpi_%d_%d_output.interface", hostname, Timestamp(), time / 0.015);
+	local output_file = format("%s_vpi_%d_%d_output.interface", HOSTNAME, Timestamp(), time / 0.015);
 
 	StringToFile(output_file, EncodeOutput(list));
 
@@ -1171,7 +1177,16 @@ local function GetCallFromArg(src, arg)
 
 		return true;
 	},
+
+	function OnGameEvent_server_cvar(params)
+	{
+		// We check in the script think for this bool, once it's true we'll set the hostname next tick
+		if (!server_cfg_execd)
+			server_cfg_execd = true;
+	},
 };
+
+__CollectGameEventCallbacks(VPI);
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1204,6 +1219,20 @@ SCRIPT_SCOPE.Think <- function() {
 	{
 		self.Kill();
 		throw e;
+	}
+
+	// If we didn't lateload idle until server.cfg executes so we can start with correct hostname
+	if (!lateload && !server_cfg_execd) return -1;
+	if (!HOSTNAME)
+	{
+		HOSTNAME   = GetSanitizedHostname();
+		INPUT_FILE = HOSTNAME + "_vpi_input.interface";
+
+		// Tell the server to clear out any callbacks it might be waiting to write
+		// from the previous map / script load
+		StringToFile(HOSTNAME + "_vpi_restart.interface", "");
+		// Clear any left over responses from the server
+		StringToFile(INPUT_FILE, "");
 	}
 
 	// Read input
@@ -1277,12 +1306,5 @@ SetDestroyCallback(SCRIPT_ENTITY, function() {
 	::FileToString <- filetostring;
 });
 
-// Tell the server to clear out any callbacks it might be waiting to write
-// from the previous map / script load
-StringToFile(hostname + "_vpi_restart.interface", "");
-
-// Clear any left over responses from the server
-StringToFile(hostname + "_vpi_input.interface", "");
-
-
-PrintMessage(null, format("Finished loading VScript-Python Interface Client Version %s", VERSION), MSG_STARTUP);
+// We use printl instead of ClientPrint since mapspawn runs before client connect
+printl(format("[VPI] -- Finished loading VScript-Python Interface Client Version %s", VERSION));
