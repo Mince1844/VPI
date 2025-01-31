@@ -78,7 +78,7 @@ def WrapDB(func):
 			if (error is None):
 				await conn.commit()
 
-			if (vpi_config.DB_TYPE == "MySQL"):
+			if (vpi_config.DB_TYPE == "mysql"):
 				vpi_config.DB.release(conn)
 
 			if (error is None): return result
