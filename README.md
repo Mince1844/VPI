@@ -23,7 +23,7 @@ VPI operates in a similar fashion to server-client architecture, with Python act
   - Install database driver
     - For MySQL, install [aiomysql](https://pypi.org/project/aiomysql/)
     - For SQLite, install [aiosqlite](https://pypi.org/project/aiosqlite/)
-  - (Optional) Install [colorama](https://pypi.org/project/colorama/) for colored console output
+  - **(Optional)** Install [colorama](https://pypi.org/project/colorama/) for colored console output
 - Place **vpi.py**, **vpi_interfaces.py**, and **vpi_config.py** in any directory on your server (as long as they're all in the same one)
 - Open **vpi_config.py**, this file contains variables you might want to modify
 - Set the `SECRET` constant to the same token you generated for the client earlier
