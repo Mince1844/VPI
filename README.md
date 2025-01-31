@@ -14,7 +14,6 @@ VPI operates in a similar fashion to server-client architecture, with Python act
   - Start a listen server and type this in console once you load in: `sv_cheats 1; ent_fire !self callscriptfunction GenerateSecret`
   - Copy the output and paste it into the string returned by the `GetSecret` function
   - **(Optional)** Comment out the `GenerateSecret` function again
-- Place any script file names and their allowed interface functions (Python functions) they need to use inside the table `SOURCE_WHITELIST`
 - **(Optional)** Modify any other settings as desired
 ## Server
 - Install or update to **Python version 3.8** or newer
@@ -42,13 +41,49 @@ VPI operates in a similar fashion to server-client architecture, with Python act
 - Create a Linux or Windows service to run **vpi.py** automatically
 
 # Usage
-- client interface functions
-- server interface functions
-- calling server functions
-- chaining functions with callbacks
-- performance considerations
-  - minimize calls (consolidate information and make one big call instead of lots of small calls)
-  - vscript perf spew convar (set to 5 to avoid i/o perf spam)
+## Client Interface Functions
+There are a few functions you can use under the `VPI` table to work with calls to the server:
+- `VPI.Call(func, kwargs=null, callback=null, urgent=false, timeout=3)`
+  - Creates a VPICallInfo instance which you can use *once* by passing to `VPI.AsyncCall`
+- `VPI.AsyncCall(table_or_call)`
+  - Stores the call to be sent to the server later (how much depends on the write interval constants and if the urgent argument is true)
+
+If you'd like examples of the usage for these functions, the **examples.nut** file in the repo provides a few.
+
+As you might have seen in the configuration section of **vpi.nut**, VPI's client employs a table called `SOURCE_WHITELIST` to allow only specific Squirrel script files (.nut) to use the functions above, and to only be able to call specific Python interface functions. To allow your scripts to use VPI, add them and the functions they need to use to the whitelist.
+
+### Performance
+Because the client and server interface through file I/O, read / write operations are limited to specific intervals; by default the normal write interval is three seconds. This is still quite fast especially if your script is sending calls constantly in a fast ticking game event like player_death or player_hurt. Where possible you should consolidate data locally and call with that stored data in an event that happens infrequently (e.g. teamplay_round_start, mvm_mission_complete, etc).
+## Server Interface Functions
+These functions go in **vpi_interfaces.py** and how they look is largely up to you depending on what you're trying to do, but there are a few restrictions.
+- All interface functions must start with `VPI_`, this is a measure to prevent any arbitrary Python function from being called by the client
+- Interface functions must be decorated with either the `WrapDB` or `WrapInterface` decorators
+  - If using `WrapInterface` the function must define the parameter `info`
+  - If using `WrapDB` the function must define the parameters `info` and `cursor`
+ 
+The `info` parameter is a copy of the call info dictionary received from the client, in most cases you will be interested in the `kwargs` you passed on the client but there are a few other keyvalues defined in `info`:
+- `token`    - Unique (in the client VM) string token for the call
+- `func`     - The interface function name to call
+- `kwargs`   - Table of data to pass to the func
+- `callback` - Bool for if a response will be sent to the client
+- `script`   - What Squirrel script file name did the call originate from
+
+The `cursor` parameter is a db cursor object used to interact with the database, view the appropriate documentation for either aiomysql or aiosqlite on how to use it.
+
+The last thing to mention is the value returned by the interface function will be sent to the client if they specified a callback in the call.
+
+Here's what all this looks like in code:
+```py
+@WrapInterface
+def VPI_Foo(info):
+  kwargs = info["kwargs"]
+  print(kwargs["bar"])
+  return "Response!"
+
+@WrapDB
+def VPI_DB_Bar(info, cursor):
+  return await cursor.execute("SELECT 'Hello World!'")
+```
 
 # Security
   TODO just realized on this note ill likely need to fully encrypt the files, scripts could try to take an existing file and change the values inside of it
