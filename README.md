@@ -1,21 +1,45 @@
 # Overview
-- what is it
-- what does it allow server owners to do
-- how does it generally function at a high level
-  - files and their roles (vpi.py, vpi_config.py, vpi_interfaces.py, vpi.nut)
-  - server / client architecture
-  - general overview of what server / client do separately and how they interact
+VPI (VScript-Python Interface) is a framework for calling Python functions from VScript in Team Fortress 2. With it server owners can create scripts which tell the server to perform some action, or query for information from a resource like a database.
+
+VPI operates in a similar fashion to server-client architecture, with Python acting as the server and Squirrel acting as the client (though both technically reside on the game server). Call data is collected via interface functions in VScript and written to files in the game servers scriptdata directory, Python watches this directory, executes parsed calls, and sends response data back to any callbacks waiting in VScript if necessary via the same scriptdata directory.
 
 # Installation
-- server / client
-- installing client
-- server dependancies
-- installing server
-- configuration
-  - environment variables / cmd options
-  - setting a secret
-  - overview of what is configurable
-  - running as a service
+## Client
+- Place **vpi.nut** and **mapspawn.nut** inside of your game servers **tf/scripts/vscripts/** directory
+
+  **Note:** *If you already have an existing **mapspawn.nut**, copy paste the contents of this repos version into yours instead*
+- Open **vpi.nut**, there is a section at the top containing variables you might want to modify
+- Set your secret key
+  - You will see a commented out function called `GenerateSecret`, uncomment this and save the file
+  - Start a listen server and type this in console once you load in: `sv_cheats 1; ent_fire !self callscriptfunction GenerateSecret`
+  - Copy the output and paste it into the string returned by the `GetSecret` function
+  - **(Optional)** Comment out the `GenerateSecret` function again
+- Place any script file names and their allowed interface functions (Python functions) they need to use inside the table `SOURCE_WHITELIST`
+- **(Optional)** Modify any other settings as desired
+## Server
+- Install or update to **Python version 3.8** or newer
+- Install dependencies
+  - VPI supports MySQL and SQLite, if you plan on using a database install either one onto your server if necessary
+  - Install database driver
+    - For MySQL, install [aiomysql](https://pypi.org/project/aiomysql/)
+    - For SQLite, install [aiosqlite](https://pypi.org/project/aiosqlite/)
+  - (Optional) Install [colorama](https://pypi.org/project/colorama/) for colored console output
+- Place **vpi.py**, **vpi_interfaces.py**, and **vpi_config.py** in any directory on your server (as long as they're all in the same one)
+- Open **vpi_config.py**, this file contains variables you might want to modify
+- Set the `SECRET` constant to the same token you generated for the client earlier
+- Either create an environment variable named `SCRIPTDATA_DIR` pointing to your scriptdata dir, or change the default value in **vpi_config.py**
+- Set up database info; skip this if you don't need database usage
+  - Set `DB_SUPPORT` to `True`
+  - Set `DB_TYPE` to either `"mysql"` or `"sqlite"`
+  - If you're using MySQL:
+    - You can provide database info three different ways:
+      - Provide cmd args when running **vpi.py**: `python vpi.py --host hostname -u user -p 3306 -db database --password 123xyz`
+      - Set the defined environment variables (`VPI_HOST`, `VPI_USER`, `VPI_PORT`, `VPI_INTERFACE`, `VPI_PASSWORD`)
+      - Set the default values directly in the script
+  - If you're using SQLite:
+    - Set the value of `DB_LITE` to the path to your .db file
+- Create a Linux or Windows service to run **vpi.py** automatically
+- **(Optional)** Modify any other settings as desired
 
 # Usage
 - client interface functions
