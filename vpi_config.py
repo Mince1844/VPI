@@ -1,8 +1,9 @@
 import os
 import sys
-import asyncio
 import logging
 from   logging.handlers import TimedRotatingFileHandler
+
+genv = os.environ.get
 
 USE_COLOR = True
 try:
@@ -30,8 +31,6 @@ SECRET = r""
 if (not SECRET):
 	raise RuntimeError("Please set your secret token")
 
-genv = os.environ.get
-
 # Change this to your scriptdata directory
 SCRIPTDATA_DIR = genv("VPI_SCRIPTDATA_DIR", r"C:\Program Files (x86)\Steam\steamapps\common\Team Fortress 2\tf\scriptdata")
 if (not os.path.exists(SCRIPTDATA_DIR)): raise RuntimeError("SCRIPTDATA_DIR does not exist")
@@ -42,9 +41,10 @@ if (DB_SUPPORT):
 	DB = None
 
 	# What type?
-	DB_TYPE = "MySQL" # MySQL or SQLite
+	DB_TYPE = "mysql" # mysql or sqlite
 
-	if (DB_TYPE == "MySQL"):
+	DB_TYPE = DB_TYPE.lower()
+	if (DB_TYPE == "mysql"):
 		import aiomysql
 		import argparse
 
@@ -74,20 +74,20 @@ if (DB_SUPPORT):
 			DB_PASSWORD = input(f"Enter password for {DB_USER}@{DB_HOST}:{DB_PORT} >>> ")
 			print()
 
-	elif (DB_TYPE == "SQLite"):
+	elif (DB_TYPE == "sqlite"):
 		import aiosqlite
 
         # Put the path to your .db file here
 		DB_LITE = "test.db"
 
 	else:
-		raise RuntimeError("DB_TYPE must be either 'MySQL' or 'SQLite'")
+		raise RuntimeError("DB_TYPE must be either 'mysql' or 'sqlite'")
 
 	# Get a connection to the current database
 	async def _GetDBConnection():
-		if (DB_TYPE == "MySQL"):
+		if (DB_TYPE == "mysql"):
 			return await DB.acquire() # Pool
-		elif (DB_TYPE == "SQLite"):
+		elif (DB_TYPE == "sqlite"):
 			return DB # Connection
 		else:
 			return
@@ -103,7 +103,7 @@ if (DB_SUPPORT):
 			except:
 				return False
 			finally:
-				if (DB_TYPE == "MySQL"):
+				if (DB_TYPE == "mysql"):
 					DB.release(conn)
 		except:
 			return False
