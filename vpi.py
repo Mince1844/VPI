@@ -262,9 +262,9 @@ def ExtractCallsFromFile(path):
 async def main():
 	LOGGER.info("VScript-Python Interface Server version %s startup", VERSION)
 
-	if (vpi_config.DB_TYPE == "MySQL"):
+	if (vpi_config.DB_TYPE == "mysql"):
 		vpi_config.DB = await vpi_config.aiomysql.create_pool(host=vpi_config.DB_HOST, user=vpi_config.DB_USER, password=vpi_config.DB_PASSWORD, port=vpi_config.DB_PORT, db=vpi_config.DB_DATABASE, autocommit=False)
-	elif (vpi_config.DB_TYPE == "SQLite"):
+	elif (vpi_config.DB_TYPE == "sqlite"):
 		vpi_config.DB = await vpi_config.aiosqlite.connect(vpi_config.DB_LITE)
 
 	if (vpi_config.DB is not None):
