@@ -1161,7 +1161,7 @@ local function GetCallFromArg(src, arg)
 
 		if (!ValidateCaller(callinfo.src, call.func))
 		{
-			PrintMessage(null, format("VPI.AsyncCall interface call for func '%s' from script '%s' failed validation", func, callinfo.src), MSG_DEBUG);
+			PrintMessage(null, format("VPI.AsyncCall interface call for func '%s' from script '%s' failed validation", call.func, callinfo.src), MSG_DEBUG);
 			return;
 		}
 
