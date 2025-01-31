@@ -188,9 +188,11 @@ async def ExecCalls():
 	tasks	 = [] # Tasks to gather
 	contexts = [] # Needed context for parsing task results
 
-	db_connected = await vpi_config.PingDB()
-	if (not db_connected):
-		LOGGER.warning("Could not establish connection to database! DB functions will be postponed")
+	db_connected = False
+	if (vpi_config.DB_SUPPORT):
+		db_connected = await vpi_config.PingDB()
+		if (not db_connected):
+			LOGGER.warning("Could not establish connection to database! DB functions will be postponed")
 
 	# Prepare calls
 	for host, t1 in calls.items():
@@ -205,7 +207,11 @@ async def ExecCalls():
 					func = getattr(vpi_interfaces, func)
 
 					# We don't have a connection to the DB so don't bother
-					if (not db_connected and hasattr(func, "__WrapDB__")): continue
+					if (not db_connected and hasattr(func, "__WrapDB__")):
+						if (not vpi_config.DB_SUPPORT):
+							LOGGER.error("Database call received from client but server does not support DB operations! Discarding call to %s", func)
+							t2["async"].remove(call)
+						continue
 
 					tasks.append(func(call))
 					contexts.append({"host":host, "call":call} if (modtime >= restart_modtime) else None)
@@ -262,13 +268,17 @@ def ExtractCallsFromFile(path):
 async def main():
 	LOGGER.info("VScript-Python Interface Server version %s startup", VERSION)
 
-	if (vpi_config.DB_TYPE == "mysql"):
-		vpi_config.DB = await vpi_config.aiomysql.create_pool(host=vpi_config.DB_HOST, user=vpi_config.DB_USER, password=vpi_config.DB_PASSWORD, port=vpi_config.DB_PORT, db=vpi_config.DB_DATABASE, autocommit=False)
-	elif (vpi_config.DB_TYPE == "sqlite"):
-		vpi_config.DB = await vpi_config.aiosqlite.connect(vpi_config.DB_LITE)
+	try:
+		if (vpi_config.DB_TYPE == "mysql"):
+			vpi_config.DB = await vpi_config.aiomysql.create_pool(host=vpi_config.DB_HOST, user=vpi_config.DB_USER, password=vpi_config.DB_PASSWORD, port=vpi_config.DB_PORT, db=vpi_config.DB_DATABASE, autocommit=False)
+		elif (vpi_config.DB_TYPE == "sqlite"):
+			vpi_config.DB = await vpi_config.aiosqlite.connect(vpi_config.DB_LITE)
 
-	if (vpi_config.DB is not None):
-		LOGGER.info("Connected to %s database using %s", vpi_config.DB_TYPE, str(vpi_config.DB))
+		if (vpi_config.DB is not None):
+			LOGGER.info("Connected to %s database using %s", vpi_config.DB_TYPE, str(vpi_config.DB))
+	except Exception as e:
+		LOGGER.critical(e)
+		return
 
 	global calls
 	global callbacks
