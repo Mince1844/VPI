@@ -28,7 +28,7 @@ VPI operates in a similar fashion to server-client architecture, with Python act
 - Open **vpi_config.py**, this file contains variables you might want to modify
 - Set the `SECRET` constant to the same token you generated for the client earlier
 - Either create an environment variable named `SCRIPTDATA_DIR` pointing to your scriptdata dir, or change the default value in **vpi_config.py**
-- Set up database info; skip this if you don't need database usage
+- Set up database info (Skip this if you don't need database usage)
   - Set `DB_SUPPORT` to `True`
   - Set `DB_TYPE` to either `"mysql"` or `"sqlite"`
   - If you're using MySQL:
