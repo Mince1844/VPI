@@ -213,7 +213,7 @@ async def ExecCalls():
 							t2["async"].remove(call)
 						continue
 
-					tasks.append(func(call))
+					tasks.append(func(call.copy()))
 					contexts.append({"host":host, "call":call} if (modtime >= restart_modtime) else None)
 
 				t2["async"].remove(call)

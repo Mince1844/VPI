@@ -74,7 +74,7 @@ local CALLBACK_TIMEOUT_CHECK_INTERVAL = 33; // 0.5s
 // --------------
 // 14 - (ALL - DEBUG)
 // 15 - (ALL)
-local LOG_MSG_LEVEL = 14;
+local LOG_MSG_LEVEL = 15;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -118,6 +118,9 @@ local function PrintMessage(player, msg, level=MSG_MISC, notify=NOTIFY_CONSOLE)
 
 if (!GetSecret().len())
 	PrintMessage(null, "Please set your secret token", MSG_ERROR, NOTIFY_CHAT);
+
+if (SOURCE_WHITELIST.len() == 1 && "vpi.nut" in SOURCE_WHITELIST)
+	PrintMessage(null, "Please modify the SOURCE_WHITELIST table to get started", MSG_ERROR, NOTIFY_CHAT);
 
 local lateload = (Entities.FindByName(null, "bignet") != null);
 if (lateload)
@@ -1157,7 +1160,11 @@ local function GetCallFromArg(src, arg)
 		}
 
 		local call = GetCallFromArg(callinfo.src, table_or_call);
-		if (!call || !call.token || callinfo.src != call.GetScript()) return;
+		if (!call || !call.token || callinfo.src != call.GetScript())
+		{
+			PrintMessage(null, format("Invalid arguments for VPI.AsyncCall from script '%s'", callinfo.src), MSG_DEBUG);
+			return;
+		}
 
 		if (!ValidateCaller(callinfo.src, call.func))
 		{
@@ -1166,7 +1173,11 @@ local function GetCallFromArg(src, arg)
 		}
 
 		// Calls are one time use for the life of the VM, do not re-use them
-		if (call.token in used_tokens) return;
+		if (call.token in used_tokens)
+		{
+			PrintMessage(null, "Duplicate token detected in VPI.AsyncCall; do not attempt to re-use VPICallInfo instances", MSG_DEBUG);
+			return;
+		}
 		used_tokens[call.token] <- null;
 
 		local list = (call.urgent) ? call_list.urgent.async : call_list.normal.async;

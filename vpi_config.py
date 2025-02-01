@@ -11,7 +11,9 @@ try:
 except:
 	USE_COLOR = False
 
+# ====================================================================================================================== #
 # Environment Variables:
+
 # VPI_SCRIPTDATA_DIR - tf/scriptdata directory
 # If MySQL Database:
 #	VPI_HOST         - hostname
@@ -71,8 +73,11 @@ if (DB_SUPPORT):
 			assert env is not None
 
 		if (DB_PASSWORD is None):
-			DB_PASSWORD = input(f"Enter password for {DB_USER}@{DB_HOST}:{DB_PORT} >>> ")
-			print()
+			try:
+				DB_PASSWORD = input(f"Enter password for {DB_USER}@{DB_HOST}:{DB_PORT} >>> ")
+				print()
+			except:
+				raise RuntimeError("Please define a password for the database connection")
 
 	elif (DB_TYPE == "sqlite"):
 		import aiosqlite
@@ -109,7 +114,6 @@ if (DB_SUPPORT):
 			return False
 
 # ====================================================================================================================== #
-
 # Logging
 
 # Should we send messages to console?
@@ -124,6 +128,7 @@ LOG_MIN_CONSOLE_LEVEL = logging.INFO
 LOG_MIN_FILE_LEVEL    = logging.WARNING
 
 # ====================================================================================================================== #
+# Ignore this section
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.DEBUG)
